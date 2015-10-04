@@ -13,7 +13,6 @@ class PlayerAI:
         # Initialize any objects or variables you need here.
         self.walls = None
         self.dist = None
-        self.easy_turrets = []
         self.h = None
         self.w = None
         self.bullet_incoming = False
@@ -29,18 +28,6 @@ class PlayerAI:
             self.walls[wall.x][wall.y] = True
         for turret in gameboard.turrets:
             self.walls[turret.x][turret.y] = True
-
-    def scout_turrets(self, gameboard):
-        """get information on turrets for whether they can be easily killable"""
-        print("scouting turrets")
-        for turret in gameboard.turrets:
-            print(turret.cooldown_time)
-            # 1 to move in, 1 to turn, 1 to shoot (assuming adjacent to turret)
-            if turret.cooldown_time > 3: # potentially 2 if we can shoot turret as it shoots back
-                self.easy_turrets.append(turret)
-            # ignore sniping from more than 4 squares away for now
-        for turret in self.easy_turrets:
-            print("easy turret at ({},{})".format(turret.x, turret.y))
 
     def look_at_cross(self, gameboard, cur_x, cur_y, arm_length, func):
         # assumes cur_x and cur_y are % w and h
@@ -130,23 +117,99 @@ class PlayerAI:
 
         if self.walls == None:
             self.calc_walls(gameboard)
-            self.scout_turrets(gameboard)
-        
+
         # in turret slaying mode
         if self.turret_to_slay:
             return turret_slay(gameboard, player, opponent)
 
-        self.dist = None
+        self.calc_turret_slay_sq(gameboard)
         self.calc_distances(gameboard, player)
+
+        self.calc_destination(destination)
+        
         direction = self.shortest_path(player, opponent.x, opponent.y)
         move = self.dir_to_move(player, direction)
-                
+
         print("Turn %d:  %f" % (turn, 1000*(time.time() - start)))
         print(move, direction)
         return move
 
+    def calc_destination(self, gameboard):
+        turret_sq, turret_d = self.nearest_turret_slay_sq()
+        pu_sq, pu_d = self.nearest_powerup_sq(gameboard)
+        if turret_d + 2 < pu_d:
+            return pu_sq
+        else:
+            return turret_sq
+
+    def calc_turret_slay_sq(self, gameboard):
+        self.turret_slay_sq = []
+        d_perp = {Direction.UP : [Direction.LEFT, Direction.RIGHT],
+                  Direction.DOWN : [Direction.LEFT, Direction.RIGHT],
+                  Direction.LEFT : [Direction.UP, Direction.DOWN],
+                  Direction.RIGHT : [Direction.UP, Direction.DOWN]}
+        for turret in gameboard.turrets:
+            tx = turret.x
+            ty = turret.y
+            cd = turret.cooldown_time
+            #Can't kill low-cooldown turrets from within their firing
+            #range (without powerups or getting shot)
+            if cd <= 2:
+                continue
+            #Can only kill 3-cooldown turrets from direct adjacency.
+            elif cd == 3:
+                for d in list(Direction):
+                    x1,y1 = self.next_pos((tx,ty),d)
+                    if self.walls[x1][y1] == False:
+                        for dp in d_perp[d]:
+                            x2,y2 = self.next_pos((x1,y1),dp)
+                            if self.walls[x2][y2] == False:
+                                self.turret_slay_sq.append((x2,y2))
+            #Can kill slow-cooldown turrets from anywhere.
+            elif cd > 3:
+                for d in list(Direction):
+                    for i in range(4):
+                        x1,y1 = self.next_pos((tx,ty),d)
+                        if self.walls[x1][y1] == False:
+                            for dp in d_perp[d]:
+                                x2,y2 = self.next_pos((x1,y1),dp)
+                                if self.walls[x2][y2] == False:
+                                    self.turret_slay_sq.append((x2,y2))
+                        else:
+                            break
+            #Can kill any turrets from beyond their shooting range.
+            for d in [Direction.UP, Direction.DOWN]:
+                x1,y1 = self.next_pos((tx,ty),d)
+                for i in range(self.h // 2 - 1):
+                    if self.walls[x1][y1] == True:
+                        break
+                    if i >= 4:
+                        self.turret_slay_sq.append((x1,y1))
+                    x1,y1 = self.next_pos((x1,y1),d)
+            for d in [Direction.LEFT, Direction.RIGHT]:
+                x1,y1 = self.next_pos((tx,ty),d)
+                for i in range(self.w // 2 - 1):
+                    if self.walls[x1][y1] == True:
+                        break
+                    if i >= 4:
+                        self.turret_slay_sq.append((x1,y1))
+                    x1,y1 = self.next_pos((x1,y1),d)
+
+    def nearest_sq(self, squares):
+        # Assumes self.dist calculated.
+        closest_sq = min(squares, key=lambda sq: self.dist[sq[0]][sq[1]][0])
+        dist = self.dist[closest_sq[0]][closest_sq[1]][0]
+        return closest_sq, dist
+
+    def nearest_turret_slay_sq(self):
+        return self.nearest_sq(self.turret_slay_sq)
+
+    def nearest_powerup_sq(self, gameboard):
+        pu_squares = [(pu.x, pu.y) for pu in gameboard.powerups]
+        return self.nearest_sq(pu_squares)
 
     def next_pos(self, curr_pos, direction):
+        ''' Get coordinates of the square in direction of current_pos. '''
         x,y = curr_pos
         if direction == Direction.DOWN:
             return (x, (y+1)%self.h)
@@ -158,6 +221,9 @@ class PlayerAI:
             return ((x-1)%self.w, y)
 
     def prev_pos(self, curr_pos, direction):
+        ''' Get coordinates of the square in the opposite direction of
+        curr_pos. I.e. moving in direction from prev_pos gets you to
+        curr_pos. '''
         x,y = curr_pos
         if direction == Direction.DOWN:
             return (x, (y-1)%self.h)
@@ -169,38 +235,63 @@ class PlayerAI:
             return ((x+1)%self.w, y)
 
     def calc_distances(self, gameboard, player):
+        ''' Magic.  Produces self.dist - a 2D array corresponding to the
+        game map, with each cell containint (dist, dirList), where dist
+        is the number of turns to get from the player's current position
+        to that cell, and dirList is a list of possible final
+        orientations / last moves taken to do this in the shortest
+        amount of time.
+
+        This array can be used to reconstruct the shortest path from the
+        player to any cell, as well as for accurate distance
+        measurements. '''
         self.dist = [[(9001,[Direction.DOWN]) for y in range(gameboard.height)] for x in range(gameboard.width)]
-        self.calc_distances_propagate(gameboard, [(player.x,player.y,[player.direction])], [], 0)
+        self.calc_distances_propagate(gameboard, {(player.x,player.y) : [player.direction]}, {}, 0)
 
     def calc_distances_propagate(self, gameboard, squares1, squares2, distance):
-        next_squares1 = squares2[:]
-        next_squares2 = []
-        squares1_dict = {}
-        for (x,y,d) in squares1:
-            if (x,y) in squares1_dict:
-                squares1_dict[(x,y)] += d
-            else:
-                squares1_dict[(x,y)] = d
-        for k, v in squares1_dict.items():
-            x,y = k
-            d = v
+        ''' The details:  every square is either 1 turn away or 2 turns
+        away, depending on player's current orientation relative to the
+        direction of that square.  Thus, we increment distances and
+        spread the net of 'reached' squares (keeping track of
+        orientation along the shortest paths to deal with above), until
+        we've reached all reachable squares.
+
+        squares1, squares2 = {(x,y) : [dList]}, where (x,y) is cell
+        coordinate, and dList is the list of directions from which you
+        can arrive at this cell along a shortest path (may be multiple). '''
+        next_squares1 = squares2
+        next_squares2 = {}
+        for pos, dList in squares1.items():
+            x,y = pos
             for d_propagation in list(Direction):
                 x1,y1 = self.next_pos((x,y), d_propagation)
                 if self.walls[x1][y1] == False:
-                    if d_propagation in d:
+                    if d_propagation in dList:
                         if self.dist[x1][y1][0] > distance + 1:
-                            next_squares1.append((x1,y1,[d_propagation]))
+                            if (x1,y1) in next_squares1:
+                                next_squares1[(x1,y1)] += [d_propagation]
+                            else:
+                                next_squares1[(x1,y1)] = [d_propagation]
                         if self.dist[x1][y1][0] == distance + 1:
                             d_new = self.dist[x1][y1][1] + [d_propagation]
-                            next_squares1.append((x1,y1,d_new))
+                            if (x1,y1) in next_squares1:
+                                next_squares1[(x1,y1)] += d_new
+                            else:
+                                next_squares1[(x1,y1)] = d_new
                     else:
                         if self.dist[x1][y1][0] > distance + 2:
-                            next_squares2.append((x1,y1,[d_propagation]))
+                            if (x1,y1) in next_squares2:
+                                next_squares2[(x1,y1)] += [d_propagation]
+                            else:
+                                next_squares2[(x1,y1)] = [d_propagation]
                         if self.dist[x1][y1][0] == distance + 2:
                             d_new = self.dist[x1][y1][1] + [d_propagation]
-                            next_squares2.append((x1,y1,d_new))
-            self.dist[x][y] = (distance,d)
-        if next_squares1 == [] and next_squares2 == []:
+                            if (x1,y1) in next_squares2:
+                                next_squares2[(x1,y1)] += d_new
+                            else:
+                                next_squares2[(x1,y1)] = d_new
+            self.dist[x][y] = (distance,dList)
+        if len(next_squares1) == 0 and len(next_squares2) == 0:
             return
         return self.calc_distances_propagate(gameboard, next_squares1, next_squares2, distance+1)
 
@@ -216,6 +307,8 @@ class PlayerAI:
         return d
 
     def dir_to_move(self, player, direction):
+        ''' Converts desired Direction enum into a Move enum, accounting
+        for player's orientation. '''
         if player.direction == direction:
             return Move.FORWARD
         else:
