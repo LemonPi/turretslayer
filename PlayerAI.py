@@ -33,6 +33,12 @@ class PlayerAI:
         self.turret_to_slay = None
         self.slay_stage = Slay.PREMOVE
         self.turn_to_slay = False
+        self.learn_opp_defense = False
+        self.opp_shield_tp = 0
+        self.opp_isnt_defensive_vs_laser = False
+        self.learn_opp_offense = False
+        self.opp_lasers = 0
+        self.opp_is_aggro_vs_shield = False
 
         self.live_turret_num = 0
         self.mexican_standoff_turns = 0
@@ -162,6 +168,14 @@ class PlayerAI:
     def get_move(self, gameboard, player, opponent):
         start = time.time()
         turn = gameboard.current_turn
+        if self.learn_opp_defense:
+            # If opponent used a shield or a teleport last turn, he's overly cautious, and I don't have to use my laser to make him use up his defence. 
+            self.opp_isnt_defensive_vs_laser = not bool(self.opp_shield_tp - opponent.shield_count - opponent.teleport_count)
+            self.learn_opp_defense = False
+        if self.learn_opp_offense:
+            # If opponent shot a laser last turn, he takes risks while I hold a shield.  Will take advantage of this next time. 
+            self.opp_is_aggro_vs_shield = bool(self.opp_lasers - opponent.laser_count)
+            self.learn_opp_offense = False
 
         if self.walls == None:
             self.calc_walls(gameboard)
@@ -190,34 +204,59 @@ class PlayerAI:
         self.calc_distances(gameboard, player)
         
         #power-up usage:
-        me_in_danger = not (self.is_safe_from_laser(player, opponent) or player.shield_active)
-        opp_in_danger = not (self.is_safe_from_laser(opponent, player) or opponent.shield_active)
+        me_in_danger = not (self.is_safe_from_laser(player, opponent) or player.shield_active) and opponent.laser_count != 0
+        opp_in_danger = not (self.is_safe_from_laser(opponent, player) or opponent.shield_active) and player.laser_count != 0
         if me_in_danger and opp_in_danger:
             #Survival is primary concern.  After that is learning the opponent's programming.
+            if self.opp_is_aggro_vs_shield:
+                if player.shield_count != 0:
+                    return Move.SHIELD
+            if self.opp_isnt_defensive_vs_laser:
+                if player.laser_count != 0:
+                    return Move.LASER
             if player.hp == 1:
                 if player.shield_count != 0:
                     return Move.SHIELD
                 elif player.teleport_count != 0:
                     return Move.TELEPORT_0
-            else:
-                pass  # and learn
+            # Learn:
+            if player.shield_count != 0:
+                #run this with opponent as parameter next turn, to see if opponent uses lasers while I hold a shield powerup.
+                self.opp_lasers = opponent.laser_count
+                self.learn_opp_offense = True
+            if player.laser_count != 0:
+                #run this with opponent as parameter next turn, to see if opponent uses shields or teleports while I hold a laser powerup.
+                self.opp_shield_tp = opponent.shield_count + opponent.teleport_count
+                self.learn_opp_defense = True
         elif me_in_danger:
             #Survival first, learning second.
-            if player.teleport_count != 0:
-                return Move.TELEPORT_0
-            elif player.hp == 1:
+            if self.opp_is_aggro_vs_shield:
                 if player.shield_count != 0:
                     return Move.SHIELD
-            else:
-                pass  # and learn
+            if player.teleport_count != 0:
+                return Move.TELEPORT_0
+            if player.hp == 1:
+                if player.shield_count != 0:
+                    return Move.SHIELD
+            # Learn:
+            if player.shield_count != 0:
+                #run this with opponent as parameter next turn, to see if opponent uses lasers while I hold a shield powerup.
+                self.opp_lasers = opponent.laser_count
+                self.learn_opp_offense = True
         elif opp_in_danger:
             #I'm safe, so try to kill opponent. 
             #Laser if no shields (present or active).  Else, don't laser, and check next turn for shield presence.  If none, next time laser. 
+            if self.opp_isnt_defensive_vs_laser:
+                if player.laser_count != 0:
+                    return Move.LASER
             if opponent.shield_count == 0:
                 if player.laser_count != 0:
                     return Move.LASER
-            else:
-                pass #  and learn
+            # Learn:
+            if player.laser_count != 0:
+                #run this with opponent as parameter next turn, to see if opponent uses shields or teleports while I hold a laser powerup.
+                self.opp_shield_tp = opponent.shield_count + opponent.teleport_count
+                self.learn_opp_defense = True
         else:
             #We're both safe.
             pass
