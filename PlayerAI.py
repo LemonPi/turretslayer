@@ -64,9 +64,11 @@ class PlayerAI:
 
     # cross functions go here -----------------------------------------
     def cross_no_bullet(self, gameboard, x, y, direction):
+        # print("checking bullets ({},{})".format(x,y))
         bullets = gameboard.are_bullets_at_tile(x, y)
         # check if the bullet there is headed towards you
         for b in bullets:
+            # print("found bullet going {}".format(b.direction))
             if b.direction == direction:
                 self.bullet_incoming = b
                 break
@@ -208,6 +210,13 @@ class PlayerAI:
         w = self.w
         for turret in gameboard.turrets:
             if turret.is_firing_next_turn:
+                # turret about to be destroyed, don't worry about it
+                self.bullet_incoming = None
+                self.look_at_cross(gameboard, turret.x, turret.y, 1, self.cross_no_bullet)
+                if self.bullet_incoming:
+                    print("turret at ({},{}) about to die, ignore".format(turret.x, turret.y))
+                    continue
+
                 tx = turret.x
                 ty = turret.y
                 if tx == x1:
