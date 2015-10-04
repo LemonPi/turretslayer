@@ -13,6 +13,12 @@ d_opp =  {Direction.UP : Direction.DOWN,
           Direction.LEFT : Direction.RIGHT,
           Direction.RIGHT : Direction.LEFT}
 
+# directions to how array indices change when moving in that direction 
+d_ind = {Direction.UP : (0, -1),
+         Direction.DOWN : (0, 1),
+         Direction.LEFT : (-1, 0),
+         Direction.RIGHT : (1, 0)}
+
 class Slay(Enum):
     PREMOVE = 0
     PRETURN = 1
@@ -31,8 +37,8 @@ class PlayerAI:
         self.turret_slay_sq = {} # (x,y):turret dictionary
         self.bullet_incoming = False
         self.turret_to_slay = None
+        self.preparing_slay_mode = None # Move indicating what to do before ready for turret slaying
         self.slay_stage = Slay.PREMOVE
-        self.turn_to_slay = False
 
         self.live_turret_num = 0
         self.mexican_standoff_turns = 0
@@ -74,29 +80,35 @@ class PlayerAI:
                 break
 
 
-    def safe_to_turret_slay(self, gameboard, target_turret, player, opponent, turn, turns_req_uninterrupted):
-        """true or false on whether we can enter turret slaying mode
-            assumes target_turret is easily killable without moving"""
+    def prepare_to_turret_slay(self, gameboard, target_turret, player, opponent, turn, turns_req_uninterrupted):
+        """Prepare a turret for turret slaying mode by setting the preparing_slay_mode (holding Move commands)
+            preparing_slay_mode set to None when no more preparations are needed
+            assumes target_turret is easily killable without moving more than 1 square"""
 
 
         # can't slay if facing the wrong way (don't need to modulo since turret is inside grid)
-        if not self.turn_to_slay:
+        # moving in the current direction won't be in the way of turret fire (also means turret will be in way of your fire)
+        (dx, dy) = d_ind[player.direction]
+        nx = (player.x + dx) % self.w
+        ny = (player.y + dy) % self.h
+        if self.walls[nx][ny] or nx != target_turret.x and ny != target_turret.y :
+            # turn to either get away from wall or towards turret fire
             if player.direction != Direction.RIGHT and target_turret.x == player.x + 1 and not self.walls[player.x+1][player.y]:
                 print("NO SLAY: face right")
-                self.turn_to_slay = True
-                return Move.FACE_RIGHT
+                self.preparing_slay_mode = Move.FACE_RIGHT
+                return
             if player.direction != Direction.LEFT and target_turret.x == player.x - 1 and not self.walls[player.x-1][player.y]:
                 print("NO SLAY: face left")
-                self.turn_to_slay = True
-                return Move.FACE_LEFT
+                self.preparing_slay_mode = Move.FACE_LEFT
+                return 
             if player.direction != Direction.UP and target_turret.y == player.y - 1 and not self.walls[player.x][player.y-1]:
                 print("NO SLAY: face up")
-                self.turn_to_slay = True
-                return Move.FACE_UP
+                self.preparnig_slay_mode = Move.FACE_UP
+                return
             if player.direction != Direction.DOWN and target_turret.y == player.y + 1 and not self.walls[player.x][player.y+1]:
                 print("NO SLAY: face down")
-                self.turn_to_slay = True
-                return Move.FACE_DOWN
+                self.preparing_slay_mode = Move.FACE_DOWN
+                return
 
 
         # [fire, cooldown] period starting from 0
@@ -107,20 +119,21 @@ class PlayerAI:
         # not the end of the firing cycle, disqualified automatically
         if phase != target_turret.fire_time:
             print("NO SLAY: bad phase")
-            return Move.NONE
+            self.preparing_slay_mode = Move.NONE
+            return
 
         # cannot slay if about to die
         self.bullet_incoming = None
         self.look_at_cross(gameboard, player.x, player.y, turns_req_uninterrupted, self.cross_no_bullet)
         if self.bullet_incoming:
             print("NO SLAY: bullet incoming ({},{})".format(self.bullet_incoming.x, self.bullet_incoming.y))
-            return False
+            return 
 
         # dangerous if opponent can get to us
         # NOTE self.dist is from self to the other object, which is only an approximation of the distance
         if self.dist[opponent.x][opponent.y][0] < turns_req_uninterrupted:
             print("NO SLAY: opponent too close")
-            return False
+            return 
 
         # dangerous if opponent teloports in while turret slaying
         if opponent.teleport_count:
@@ -129,8 +142,11 @@ class PlayerAI:
                 # distance that either the opponent or their bullet can close + 1 turn for teleport usage
                 if self.dist[tele[0]][tele[1]][0] + 1 < turns_req_uninterrupted:
                     print("NO SLAY: opponent can teleport in")
-                    return False
-        return Slay.SLAY_MODE
+                    return 
+
+        # finally passed all tests, can enter slay mode
+        self.preparing_slay_mode = None
+
 
 
     def turret_slay(self, gameboard, player, opponent):
@@ -161,12 +177,11 @@ class PlayerAI:
             self.turret_slay_sq = {k:v for k,v in self.turret_slay_sq.items() if v.x != self.turret_to_slay.x and v.y != self.turret_to_slay.y}
             print(len(self.turret_slay_sq))
             self.turret_to_slay = None
-            self.turn_to_slay = False
             # get away from turret on the next move by resuming normal behaviour
             return Move.SHOOT
 
     def get_move(self, gameboard, player, opponent):
-        # Write your AI here.
+        print('...')
         start = time.time()
         turn = gameboard.current_turn
 
@@ -182,21 +197,73 @@ class PlayerAI:
             if self.is_adjacent(player, target_turret.x, target_turret.y):
                 turns_req = 3
 
-            slay_move = self.safe_to_turret_slay(gameboard, target_turret, player, opponent, turn, turns_req)
-            if slay_move == Slay.SLAY_MODE:
-                print("entering turret slaying mode")
+            self.prepare_to_turret_slay(gameboard, target_turret, player, opponent, turn, turns_req)
+            if not self.preparing_slay_mode: # finished all preparation
                 self.turret_to_slay = target_turret
-            elif slay_move:
-                print("safely preparing for slaying")
-                return slay_move
 
-        # in turret slaying mode, ignore other tasks
+
+        # do not interrupt turret killing in the middle of it
+        if self.slay_stage in {Slay.PRETURN, Slay.SHOOT}:
+            print("uninterrupted slaying mode")
+            return self.turret_slay(gameboard, player, opponent)
+
+        # power-up usage (priority over starting turret killing but do not interrupt it):
+        me_in_danger = not (self.is_safe_from_laser(player, opponent) or player.shield_active)
+        opp_in_danger = not (self.is_safe_from_laser(opponent, player) or opponent.shield_active)
+        if me_in_danger and opp_in_danger:
+            #Survival is primary concern.  After that is learning the opponent's programming.
+            if player.hp == 1:
+                if player.shield_count != 0:
+                    return Move.SHIELD
+                elif player.teleport_count != 0:
+                    return Move.TELEPORT_0
+            else:
+                print("both in danger")
+                pass  # and learn
+        elif me_in_danger:
+            #Survival first, learning second.
+            # teleport is more valuable here since using a shield would keep you in a vulnerable position the next turn
+            if player.teleport_count != 0:
+                return Move.TELEPORT_0
+            elif player.hp == 1:
+                if player.shield_count != 0:
+                    return Move.SHIELD
+            else:
+                print("I'm in danger")
+                pass  # and learn
+        elif opp_in_danger:
+            #I'm safe, so try to kill opponent. 
+            #Laser if no shields (present or active).  Else, don't laser, and check next turn for shield presence.  If none, next time laser. 
+            print("opp in danger")
+            if opponent.shield_count == 0:
+                if player.laser_count != 0:
+                    return Move.LASER
+            else:
+                pass #  and learn
+        else:
+            #We're both safe.
+            pass
+
+        # preparing for turret slaying (do this before starting slaying mode, when finished preparations should be None)
+        if not self.preparing_slay_mode is None:
+            print("safely preparing for slaying")
+            return self.preparing_slay_mode
+
+        # entering turret slaying mode, ignore other tasks while doing so
         if self.turret_to_slay:
+            print("entering turret slaying mode")
+            # finished preparing
+            self.preparing_slay_mode = None
             return self.turret_slay(gameboard, player, opponent)
 
         self.calc_distances(gameboard, player)
-
-        destination = self.calc_destination(gameboard)
+        
+        
+        # If opp directly in front of me after dealing with issues of my survival, shoot him. 
+        if self.next_pos((player.x,player.y), player.direction) == (opponent.x,opponent.y):
+            return Move.SHOOT
+        
+        destination = self.calc_destination(gameboard, opponent)
         
         direction = self.shortest_path(player, destination[0], destination[1])
         move = self.dir_to_move(player, direction)
@@ -204,19 +271,55 @@ class PlayerAI:
         move = self.QA_move(gameboard, player, opponent, move)
         print(move)
 
-##        for i in range(len(self.dist)):
-##            for j in range(len(self.dist[0])):
-##                print(self.dist[j][i],end='')
-##            print()
 
         print("Turn %d:  %f" % (turn, 1000*(time.time() - start)))
-        # print(move, direction)
         print(destination)
         return move
 
-    def is_safe_from_turretfire(self, x1, y1, gameboard):
-        h = self.h
-        w = self.w
+    def is_safe_from_laser(self, player, opponent):
+        ''' False iff opponent can hit player no matter what (excepting shield and teleport). '''
+        safe_at_curr_pos = self.is_safe_from_one_turretfire(player.x, player.y, opponent.x, opponent.y)
+        x1,y1 = self.next_pos((player.x, player.y), player.direction)
+        safe_at_next_pos = self.is_safe_from_one_turretfire(x1, y1, opponent.x, opponent.y)
+        return safe_at_curr_pos or safe_at_next_pos
+
+    def is_safe_from_one_turretfire(self, x1, y1, tx, ty):
+        ''' Also works for Laser usage.  (tx,ty) is source of fire, (x1,y1) is test position. '''
+        if tx == x1:
+            #checks if you're above/below/right/left of turret, and in range and not blocked by a wall
+            #up
+            for y in range(ty-1, ty-5, -1):
+                if self.walls[tx][y % self.h] == True:
+                    break
+                if y == y1:
+                    #BAD - TURRETFIRE
+                    return False
+            #down
+            for y in range(ty+1, ty+5):
+                if self.walls[tx][y % self.h] == True:
+                    break
+                if y == y1:
+                    #BAD - TURRETFIRE
+                    return False
+        if ty == y1:
+            #right
+            for x in range(tx-1, tx-5, -1):
+                if self.walls[x % self.w][ty] == True:
+                    break
+                if x == x1:
+                    #BAD - TURRETFIRE
+                    return False
+            #left
+            for x in range(tx+1, tx+5):
+                if self.walls[x % self.w][ty] == True:
+                    break
+                if x == x1:
+                    #BAD - TURRETFIRE
+                    return False
+        return True
+                        
+    def is_safe_from_all_turretfire(self, x1, y1, gameboard):
+        ''' Check whether the square at (x1,y1) is safe from turret fire on the next turn'''
         for turret in gameboard.turrets:
             if turret.is_firing_next_turn:
                 # turret about to be destroyed, don't worry about it
@@ -226,39 +329,9 @@ class PlayerAI:
                     print("turret at ({},{}) about to die, ignore".format(turret.x, turret.y))
                     continue
 
-                tx = turret.x
-                ty = turret.y
-                if tx == x1:
-                    #checks if you're above/below/right/left of turret, and in range and not blocked by a wall
-                    #up
-                    for y in range(ty-1, ty-5, -1):
-                        if self.walls[tx][y % h] == True:
-                            break
-                        if y == y1:
-                            #BAD - TURRETFIRE
-                            return False
-                    #down
-                    for y in range(ty+1, ty+5):
-                        if self.walls[tx][y % h] == True:
-                            break
-                        if y == y1:
-                            #BAD - TURRETFIRE
-                            return False
-                if ty == y1:
-                    #right
-                    for x in range(tx-1, tx-5, -1):
-                        if self.walls[x % w][ty] == True:
-                            break
-                        if x == x1:
-                            #BAD - TURRETFIRE
-                            return False
-                    #left
-                    for x in range(tx+1, tx+5):
-                        if self.walls[x % w][ty] == True:
-                            break
-                        if x == x1:
-                            #BAD - TURRETFIRE
-                            return False
+                if self.is_safe_from_one_turretfire(x1, y1, turret.x, turret.y) == False:
+                    return False
+        # safe from all turrets
         return True
 
     def QA_move(self, gameboard, player, opponent, move):
@@ -266,16 +339,16 @@ class PlayerAI:
         if move == Move.FORWARD:
             (x1,y1) = self.next_pos((player.x, player.y), player.direction)
             #Avoid turretfire.
-            if not self.is_safe_from_turretfire(x1, y1, gameboard):
+            if not self.is_safe_from_all_turretfire(x1, y1, gameboard):
                 return Move.SHOOT
             #Avoid bullets
             for bullet in gameboard.bullets:
                 if bullet.direction == d_opp[player.direction]:
                     #Bullet right in front of you - RUN!
                     if (bullet.x, bullet.y) == (x1,y1):
-                        if player.teleport != 0:
+                        if player.teleport_count != 0:
                             return Move.TELEPORT_0 #todo - find best teleport location
-                        elif player.shield != 0:
+                        elif player.shield_count != 0:
                             return Move.SHIELD
                         else:
                             return move #nothing to be done; take the damage and go on your merry way.
@@ -284,19 +357,19 @@ class PlayerAI:
                         for d in d_perp[bullet.direction]:
                             x2,y2 = self.next_pos((player.x,player.y), d)
                             if self.walls[x2][y2] == False:
-                                return self.dir_to_move(d)
+                                return self.dir_to_move(player, d)
                 if self.next_pos((bullet.x, bullet.y), bullet.direction) == (x1,y1):
                     #Bullet coming at you from 2 squares away - turn away
                     if player.direction not in d_perp[bullet.direction]:
                         for d in d_perp[bullet.direction]:
                             x2,y2 = self.next_pos((player.x,player.y), d)
                             if self.walls[x2][y2] == False:
-                                return self.dir_to_move(d)
+                                return self.dir_to_move(player, d)
                         else:
                             #Nowhere to turn - RUN!
-                            if player.teleport != 0:
+                            if player.teleport_count != 0:
                                 return Move.TELEPORT_0 #todo - find best teleport location
-                            elif player.shield != 0:
+                            elif player.shield_count != 0:
                                 return Move.SHIELD
                             else:
                                 return move #nothing to be done; take the damage and go on your merry way. 
@@ -315,17 +388,17 @@ class PlayerAI:
                             continue
                         x2,y2 = self.next_pos((player.x,player.y), d)
                         if self.walls[x2][y2] == False:
-                            return self.dir_to_move(d)
+                            return self.dir_to_move(player, d)
         #If you don't move, check that you won't get injured. 
-        elif move in [Move.FACE_LEFT, Move.FACE_RIGHT, Move.FACE_DOWN, Move.FACE_UP]:
+        elif move in [Move.FACE_LEFT, Move.FACE_RIGHT, Move.FACE_DOWN, Move.FACE_UP, Move.LASER, Move.NONE]:
             x1,y1 = (player.x, player.y)
-            if not self.is_safe_from_turretfire(x1, y1, gameboard):
+            if not self.is_safe_from_all_turretfire(x1, y1, gameboard):
                 x2,y2 = self.next_pos((x1,y1), player.direction)
                 if self.walls[x2][y2] == False:
                     return Move.FORWARD
-                elif player.teleport != 0:
+                elif player.teleport_count != 0:
                     return Move.TELEPORT_0 #todo - find best teleport location
-                elif player.shield != 0:
+                elif player.shield_count != 0:
                     return Move.SHIELD
                 else:
                     return move #nothing to be done; take the damage and go on your merry way.
@@ -334,9 +407,9 @@ class PlayerAI:
                 if bullet.direction == d_opp[player.direction]:
                     #Bullet right in front of you - RUN!
                     if (bullet.x, bullet.y) == (x1,y1):
-                        if player.teleport != 0:
+                        if player.teleport_count != 0:
                             return Move.TELEPORT_0 #todo - find best teleport location
-                        elif player.shield != 0:
+                        elif player.shield_count != 0:
                             return Move.SHIELD
                         else:
                             return move #nothing to be done; take the damage and go on your merry way.
@@ -344,11 +417,17 @@ class PlayerAI:
         return move
 
 
-    def calc_destination(self, gameboard):
+    def calc_destination(self, gameboard, opponent):
         turret_sq, turret_d = self.nearest_turret_slay_sq()
         pu_sq, pu_d = self.nearest_powerup_sq(gameboard)
         print('distances', pu_d, turret_d)
-        if turret_d + 1 < pu_d:
+        if pu_d == None and turret_d == None:
+            return (opponent.x, opponent.y)
+        elif pu_d == None:
+            return turret_sq
+        elif turret_d == None:
+            return pu_sq
+        elif turret_d + 1 < pu_d:
             return turret_sq
         else:
             return pu_sq
@@ -420,12 +499,16 @@ class PlayerAI:
 
     def nearest_sq(self, squares):
         # Assumes self.dist calculated.
+        if len(squares) == 0:
+            return None, None
         closest_sq = min(squares, key=lambda sq: self.dist[sq[0]][sq[1]][0])
         dist = self.dist[closest_sq[0]][closest_sq[1]][0]
         return closest_sq, dist
 
     def nearest_sq_dict(self, squares):
         # For dictionaries with keys as (x,y):turret
+        if len(squares) == 0:
+            return None, None
         closest_sq = min(squares.keys(), key=lambda sq: self.dist[sq[0]][sq[1]][0])
         dist = self.dist[closest_sq[0]][closest_sq[1]][0]
         return closest_sq, dist
