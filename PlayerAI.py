@@ -19,7 +19,14 @@ class PlayerAI:
         if self.walls == None:
             self.calc_walls(gameboard)
             self.calc_distances(gameboard, player)
-            print(self.dist)
+            for row in self.dist:
+                print(row)
+            print()
+            for j in range(len(self.dist[0])):
+                for i in range(len(self.dist)):
+                    print(self.dist[i][j],end='')
+                print()
+                
         
         turn = gameboard.current_turn
 
@@ -27,31 +34,52 @@ class PlayerAI:
         return Move.NONE
 
     def calc_distances(self, gameboard, player):
-        self.dist = [[9001 for y in range(gameboard.height)] for x in range(gameboard.width)]
-        self.calc_distances_propagate(gameboard, [(player.x,player.y)], 0)
+        self.dist = [[(9001,Direction.DOWN) for y in range(gameboard.height)] for x in range(gameboard.width)]
+        self.calc_distances_propagate(gameboard, [(player.x,player.y,player.direction)], [], 0)
 
-    def calc_distances_propagate(self, gameboard, squares, distance):
-        next_squares = []
+    def calc_distances_propagate(self, gameboard, squares1, squares2, distance):
+        next_squares1 = squares2
+        next_squares2 = []
         h = gameboard.height
         w = gameboard.width
-        for (x,y) in squares:
+        for (x,y,d) in squares1:
             x1 = (x+1)%w
             x2 = (x-1)%w
             y1 = (y+1)%h
             y2 = (y-1)%h
+            #down
             if self.walls[x][y1] == False:
-                if self.dist[x][y1] > distance:
-                    next_squares.append((x,y1))
+                if d == Direction.DOWN:
+                    if self.dist[x][y1][0] >= distance + 1:
+                        next_squares1.append((x,y1,Direction.DOWN))
+                else:
+                    if self.dist[x][y1][0] >= distance + 2:
+                        next_squares2.append((x,y1,Direction.DOWN))
+            #up
             if self.walls[x][y2] == False:
-                if self.dist[x][y2] > distance:
-                    next_squares.append((x,y2))
+                if d == Direction.UP:
+                    if self.dist[x][y2][0] >= distance + 1:
+                        next_squares1.append((x,y2,Direction.UP))
+                else:
+                    if self.dist[x][y2][0] >= distance + 2:
+                        next_squares2.append((x,y2,Direction.UP))
+            #right
             if self.walls[x1][y] == False:
-                if self.dist[x1][y] > distance:
-                    next_squares.append((x1,y))
+                if d == Direction.RIGHT:
+                    if self.dist[x1][y][0] >= distance + 1:
+                        next_squares1.append((x1,y,Direction.RIGHT))
+                else:
+                    if self.dist[x1][y][0] >= distance + 2:
+                        next_squares2.append((x1,y,Direction.RIGHT))
+            #left
             if self.walls[x2][y] == False:
-                if self.dist[x2][y] > distance:
-                    next_squares.append((x2,y))
-            self.dist[x][y] = distance
-        if next_squares == []:
+                if d == Direction.LEFT:
+                    if self.dist[x2][y][0] >= distance + 1:
+                        next_squares1.append((x2,y,Direction.LEFT))
+                else:
+                    if self.dist[x2][y][0] >= distance + 2:
+                        next_squares2.append((x2,y,Direction.LEFT))
+            self.dist[x][y] = (distance,d)
+        if next_squares1 == [] and next_squares2 == []:
             return
-        return self.calc_distances_propagate(gameboard, next_squares, distance+1)
+        return self.calc_distances_propagate(gameboard, next_squares1, next_squares2, distance+1)
