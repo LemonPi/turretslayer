@@ -125,13 +125,14 @@ class PlayerAI:
         self.calc_turret_slay_sq(gameboard)
         self.calc_distances(gameboard, player)
 
-        self.calc_destination(destination)
+        destination = self.calc_destination(gameboard)
         
-        direction = self.shortest_path(player, opponent.x, opponent.y)
+        direction = self.shortest_path(player, destination[0], destination[1])
         move = self.dir_to_move(player, direction)
 
         print("Turn %d:  %f" % (turn, 1000*(time.time() - start)))
         print(move, direction)
+        print(destination)
         return move
 
     def calc_destination(self, gameboard):
@@ -205,7 +206,7 @@ class PlayerAI:
         return self.nearest_sq(self.turret_slay_sq)
 
     def nearest_powerup_sq(self, gameboard):
-        pu_squares = [(pu.x, pu.y) for pu in gameboard.powerups]
+        pu_squares = [(pu.x, pu.y) for pu in gameboard.power_ups]
         return self.nearest_sq(pu_squares)
 
     def next_pos(self, curr_pos, direction):
@@ -259,6 +260,8 @@ class PlayerAI:
         squares1, squares2 = {(x,y) : [dList]}, where (x,y) is cell
         coordinate, and dList is the list of directions from which you
         can arrive at this cell along a shortest path (may be multiple). '''
+        for pos in squares1:
+            squares2.pop(pos,None)
         next_squares1 = squares2
         next_squares2 = {}
         for pos, dList in squares1.items():
