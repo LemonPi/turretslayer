@@ -27,7 +27,7 @@ class Slay(Enum):
 
 def print_debug(*arg):
     ''' Prints in debug mode and does nothing in production. '''
-    print(*arg)
+    # print(*arg)
     return
  
 
@@ -39,6 +39,8 @@ class PlayerAI:
         self.h = None
         self.w = None
         self.turret_slay_sq = {} # (x,y):turret dictionary
+        self.last_turret_slay_sq = None
+
         self.bullet_incoming = False
         self.turret_to_slay = None
         self.preparing_slay_mode = None # Move indicating what to do before ready for turret slaying
@@ -288,22 +290,6 @@ class PlayerAI:
                 if x == target_turret.x or y == target_turret.y:
                     self.preparing_slay_mode = self.dir_to_move(player, d)
                     return
-            # if player.direction != Direction.RIGHT and target_turret.x == player.x + 1 and not self.walls[player.x+1][player.y]:
-            #     print_debug("NO SLAY: face right")
-            #     self.preparing_slay_mode = Move.FACE_RIGHT
-            #     return
-            # if player.direction != Direction.LEFT and target_turret.x == player.x - 1 and not self.walls[player.x-1][player.y]:
-            #     print_debug("NO SLAY: face left")
-            #     self.preparing_slay_mode = Move.FACE_LEFT
-            #     return 
-            # if player.direction != Direction.UP and target_turret.y == player.y - 1 and not self.walls[player.x][player.y-1]:
-            #     print_debug("NO SLAY: face up")
-            #     self.preparnig_slay_mode = Move.FACE_UP
-            #     return
-            # if player.direction != Direction.DOWN and target_turret.y == player.y + 1 and not self.walls[player.x][player.y+1]:
-            #     print_debug("NO SLAY: face down")
-            #     self.preparing_slay_mode = Move.FACE_DOWN
-            #     return
 
         # [fire, cooldown] period starting from 0
         period = target_turret.fire_time + target_turret.cooldown_time;
@@ -367,10 +353,14 @@ class PlayerAI:
             print_debug("Shooting")
             # finished slaying turret
             self.slay_stage = Slay.PREMOVE
-            print_debug(len(self.turret_slay_sq))
-            self.calc_turret_slay_sq(gameboard)
-            self.turret_slay_sq = {k:v for k,v in self.turret_slay_sq.items() if v.x != self.turret_to_slay.x and v.y != self.turret_to_slay.y}
-            print_debug(len(self.turret_slay_sq))
+            print_debug(len(self.last_turret_slay_sq))
+            # make sure that when squares are updated, those ones are not added
+            self.last_turret_slay_sq = {}
+            for k,v in self.turret_slay_sq.items():
+                if not (v.x == self.turret_to_slay.x and v.y == self.turret_to_slay.y):
+                    self.last_turret_slay_sq[k] = v
+            # self.last_turret_slay_sq = {k:v for k,v in self.turret_slay_sq.items() if v.x != self.turret_to_slay.x and v.y != self.turret_to_slay.y}
+            print_debug(len(self.last_turret_slay_sq))
             self.turret_to_slay = None
             # get away from turret on the next move by resuming normal behaviour
             return Move.SHOOT
@@ -569,6 +559,9 @@ class PlayerAI:
                     if self.walls[x1][y1] == False:
                         for dp in d_perp[d]:
                             x2,y2 = self.next_pos((x1,y1),dp)
+                            # allow only removal from turret slay squares by keeping track of last turn's squares
+                            if self.last_turret_slay_sq != None and (x2,y2) not in self.last_turret_slay_sq:
+                                continue
                             if self.walls[x2][y2] == False:
                                 self.turret_slay_sq[(x2,y2)] = turret
             #Can kill slow-cooldown turrets from anywhere.
@@ -579,10 +572,15 @@ class PlayerAI:
                         if self.walls[x1][y1] == False:
                             for dp in d_perp[d]:
                                 x2,y2 = self.next_pos((x1,y1),dp)
+                                # allow only removal from turret slay squares by keeping track of last turn's squares
+                                if self.last_turret_slay_sq != None and (x2,y2) not in self.last_turret_slay_sq:
+                                    continue
                                 if self.walls[x2][y2] == False:
                                     self.turret_slay_sq[(x2,y2)] = turret
                         else:
                             break
+
+        self.last_turret_slay_sq = self.turret_slay_sq
             # didn't test on any long range map, so just ignore long range special squares
             # #Can kill any turrets from beyond their shooting range.
             # for d in [Direction.UP, Direction.DOWN]:
