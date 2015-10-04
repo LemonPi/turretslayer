@@ -127,7 +127,7 @@ class PlayerAI:
             tele_in = gameboard.teleport_locations
             for tele in tele_in:
                 # distance that either the opponent or their bullet can close + 1 turn for teleport usage
-                if self.dist[tele.x][tele.y][0] + 1 < turns_req_uninterrupted:
+                if self.dist[tele[0]][tele[1]][0] + 1 < turns_req_uninterrupted:
                     print("NO SLAY: opponent can teleport in")
                     return False
         return Slay.SLAY_MODE
@@ -156,6 +156,10 @@ class PlayerAI:
             print("Shooting")
             # finished slaying turret
             self.slay_stage = Slay.PREMOVE
+            print(len(self.turret_slay_sq))
+            self.calc_turret_slay_sq(gameboard)
+            self.turret_slay_sq = {k:v for k,v in self.turret_slay_sq.items() if v.x != self.turret_to_slay.x and v.y != self.turret_to_slay.y}
+            print(len(self.turret_slay_sq))
             self.turret_to_slay = None
             self.turn_to_slay = False
             # get away from turret on the next move by resuming normal behaviour
