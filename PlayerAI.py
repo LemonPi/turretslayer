@@ -1,7 +1,13 @@
+from enum import Enum
 from PythonClientAPI.libs.Game.Enums import *
 from PythonClientAPI.libs.Game.MapOutOfBoundsException import *
 import time
 
+class Slay(Enum):
+    PREMOVE = 0
+    PRETURN = 1
+    SHOOT = 2
+ 
 class PlayerAI:
     def __init__(self):
         # Initialize any objects or variables you need here.
@@ -10,6 +16,7 @@ class PlayerAI:
         self.h = None
         self.w = None
         self.bullet_incoming = False
+        self.turret_to_slay = None
         pass
 
     def calc_walls(self, gameboard):
@@ -46,6 +53,7 @@ class PlayerAI:
         for y in range(cur_y - 1, cur_y - 1 - arm_length, -1):
             func(gameboard, cur_x, y % h, direction.UP)
 
+    # cross functions go here -----------------------------------------
     def cross_no_bullet(self, gameboard, x, y, direction):
         bullets = gameboard.are_bullets_at_tile
         # check if the bullet there is headed towards you
@@ -91,6 +99,29 @@ class PlayerAI:
                     return False
         return True
 
+    def turret_slay(self, gameboard, player, opponent):
+        # move into position to shoot
+        if self.slay_stage == Slay.PREMOVE:
+            return Move.FORWARD
+        # turn to face the turret
+        elif self.slay_stage == Slay.PRETURN:
+            if player.x < self.turret_to_slay.x:
+                return Move.FACE_UP
+            elif player.x > self.turret_to_slay.x:
+                return Move.FACE_DOWN
+            elif player.y < self.turret_to_slay.y:
+                return Move.FACE_RIGHT
+            else:
+                return Move.FACE_LEFT
+        # just shoot it
+        elif self.slay_stage == Slay.SHOOT:
+            self.slay_stage = Slay.GETAWAY
+            # finished slaying turret
+            self.slay_stage = Slay.PREMOVE
+            self.turret_to_slay = None
+            # get away from turret on the next move by resuming normal behaviour
+            return Move.SHOOT
+
     def get_move(self, gameboard, player, opponent):
         # Write your AI here.
         start = time.time()
@@ -99,10 +130,6 @@ class PlayerAI:
             self.calc_walls(gameboard)
             self.scout_turrets(gameboard)
 
-        self.calc_distances(gameboard, player)
-        # print(self.dist)
-        
-        
         self.calc_distances(gameboard, player)
         # for row in self.dist:
         #     print(row)
@@ -115,6 +142,11 @@ class PlayerAI:
         # starts at turn 0
         turn = gameboard.current_turn
         print("turn {}".format(turn))
+
+        # in turret slaying mode
+        if self.turret_to_slay:
+            return turret_slay(gameboard, player, opponent)
+
 
         print("elapsed: {}".format(1000*(time.time() - start)))
         return Move.NONE
