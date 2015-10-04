@@ -1,5 +1,6 @@
 from PythonClientAPI.libs.Game.Enums import *
 from PythonClientAPI.libs.Game.MapOutOfBoundsException import *
+import time
 
 class PlayerAI:
     def __init__(self):
@@ -16,21 +17,23 @@ class PlayerAI:
 
     def get_move(self, gameboard, player, opponent):
         # Write your AI here.
+        start = time.time()
+
         if self.walls == None:
             self.calc_walls(gameboard)
-            self.calc_distances(gameboard, player)
-            for row in self.dist:
-                print(row)
-            print()
-            for j in range(len(self.dist[0])):
-                for i in range(len(self.dist)):
-                    print(self.dist[i][j],end='')
-                print()
+		
+		self.calc_distances(gameboard, player)
+		for row in self.dist:
+			print(row)
+		print()
+		for j in range(len(self.dist[0])):
+			for i in range(len(self.dist)):
+				print(self.dist[i][j],end='')
+			print()
                 
-        
         turn = gameboard.current_turn
 
-        
+        print("elapsed: {}".format(1000*(time.time() - start)))
         return Move.NONE
 
     def calc_distances(self, gameboard, player):
