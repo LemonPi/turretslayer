@@ -15,6 +15,7 @@ class PlayerAI:
         self.dist = None
         self.h = None
         self.w = None
+        self.turret_slay_sq = [] # (x,y) list where we can go to kill turrets
         self.bullet_incoming = False
         self.turret_to_slay = None
         pass
