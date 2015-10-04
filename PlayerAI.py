@@ -7,6 +7,9 @@ class Slay(Enum):
     PREMOVE = 0
     PRETURN = 1
     SHOOT = 2
+
+    SLAY_MODE = 3
+
  
 class PlayerAI:
     def __init__(self):
@@ -15,9 +18,13 @@ class PlayerAI:
         self.dist = None
         self.h = None
         self.w = None
-        self.turret_slay_sq = [] # (x,y) list where we can go to kill turrets
+        self.turret_slay_sq = {} # (x,y):turret dictionary
         self.bullet_incoming = False
         self.turret_to_slay = None
+        self.slay_stage = Slay.PREMOVE
+        self.turn_to_slay = False
+
+        self.live_turret_num = 0
         pass
 
     def calc_walls(self, gameboard):
@@ -33,27 +40,51 @@ class PlayerAI:
     def look_at_cross(self, gameboard, cur_x, cur_y, arm_length, func):
         # assumes cur_x and cur_y are % w and h
         # gives the direction towards cur_x and cur_y from arm
+        h = self.h
+        w = self.w
         for x in range(cur_x + 1, cur_x + 1 + arm_length):
-            func(gameboard, x % w, cur_y, direction.LEFT)
+            func(gameboard, x % w, cur_y, Direction.LEFT)
         for x in range(cur_x - 1, cur_x - 1 - arm_length, -1):
-            func(gameboard, x % w, cur_y, direction.RIGHT)
+            func(gameboard, x % w, cur_y, Direction.RIGHT)
         for y in range(cur_y + 1, cur_y + 1 + arm_length):
-            func(gameboard, cur_x, y % h, direction.DOWN)
+            func(gameboard, cur_x, y % h, Direction.UP)
         for y in range(cur_y - 1, cur_y - 1 - arm_length, -1):
-            func(gameboard, cur_x, y % h, direction.UP)
+            func(gameboard, cur_x, y % h, Direction.DOWN)
 
     # cross functions go here -----------------------------------------
     def cross_no_bullet(self, gameboard, x, y, direction):
-        bullets = gameboard.are_bullets_at_tile
+        bullets = gameboard.are_bullets_at_tile(x, y)
         # check if the bullet there is headed towards you
         for b in bullets:
             if b.direction == direction:
                 self.bullet_incoming = b
+                break
 
 
     def safe_to_turret_slay(self, gameboard, target_turret, player, opponent, turn, turns_req_uninterrupted):
         """true or false on whether we can enter turret slaying mode
             assumes target_turret is easily killable without moving"""
+
+
+        # can't slay if facing the wrong way (don't need to modulo since turret is inside grid)
+        if not self.turn_to_slay:
+            if player.direction != Direction.RIGHT and target_turret.x == player.x + 1 and not self.walls[player.x+1][player.y]:
+                print("NO SLAY: face right")
+                self.turn_to_slay = True
+                return Move.FACE_RIGHT
+            if player.direction != Direction.LEFT and target_turret.x == player.x - 1 and not self.walls[player.x-1][player.y]:
+                print("NO SLAY: face left")
+                self.turn_to_slay = True
+                return Move.FACE_LEFT
+            if player.direction != Direction.UP and target_turret.y == player.y - 1 and not self.walls[player.x][player.y-1]:
+                print("NO SLAY: face up")
+                self.turn_to_slay = True
+                return Move.FACE_UP
+            if player.direction != Direction.DOWN and target_turret.y == player.y + 1 and not self.walls[player.x][player.y+1]:
+                print("NO SLAY: face down")
+                self.turn_to_slay = True
+                return Move.FACE_DOWN
+
 
         # [fire, cooldown] period starting from 0
         period = target_turret.fire_time + target_turret.cooldown_time;
@@ -63,11 +94,11 @@ class PlayerAI:
         # not the end of the firing cycle, disqualified automatically
         if phase != target_turret.fire_time:
             print("NO SLAY: bad phase")
-            return False
+            return Move.NONE
 
         # cannot slay if about to die
         self.bullet_incoming = None
-        look_at_cross(gameboard, player.x, player.y, turns_req_uninterrupted, cross_no_bullet)
+        self.look_at_cross(gameboard, player.x, player.y, turns_req_uninterrupted, self.cross_no_bullet)
         if self.bullet_incoming:
             print("NO SLAY: bullet incoming ({},{})".format(self.bullet_incoming.x, self.bullet_incoming.y))
             return False
@@ -86,28 +117,34 @@ class PlayerAI:
                 if self.dist[tele.x][tele.y][0] + 1 < turns_req_uninterrupted:
                     print("NO SLAY: opponent can teleport in")
                     return False
-        return True
+        return Slay.SLAY_MODE
+
 
     def turret_slay(self, gameboard, player, opponent):
         # move into position to shoot
         if self.slay_stage == Slay.PREMOVE:
+            print("Moving forward")
+            self.slay_stage = Slay.PRETURN
             return Move.FORWARD
         # turn to face the turret
         elif self.slay_stage == Slay.PRETURN:
+            print("Turning to shoot")
+            self.slay_stage = Slay.SHOOT
             if player.x < self.turret_to_slay.x:
-                return Move.FACE_UP
-            elif player.x > self.turret_to_slay.x:
-                return Move.FACE_DOWN
-            elif player.y < self.turret_to_slay.y:
                 return Move.FACE_RIGHT
-            else:
+            elif player.x > self.turret_to_slay.x:
                 return Move.FACE_LEFT
+            elif player.y < self.turret_to_slay.y:
+                return Move.FACE_DOWN
+            else:
+                return Move.FACE_UP
         # just shoot it
         elif self.slay_stage == Slay.SHOOT:
-            self.slay_stage = Slay.GETAWAY
+            print("Shooting")
             # finished slaying turret
             self.slay_stage = Slay.PREMOVE
             self.turret_to_slay = None
+            self.turn_to_slay = False
             # get away from turret on the next move by resuming normal behaviour
             return Move.SHOOT
 
@@ -119,11 +156,27 @@ class PlayerAI:
         if self.walls == None:
             self.calc_walls(gameboard)
 
-        # in turret slaying mode
-        if self.turret_to_slay:
-            return turret_slay(gameboard, player, opponent)
+        self.update_live_turrets(gameboard)
 
-        self.calc_turret_slay_sq(gameboard)
+        # reached a turret slaying squre
+        if (player.x, player.y) in self.turret_slay_sq:
+            target_turret = self.turret_slay_sq[(player.x, player.y)]
+            turns_req = 4 # enter turn shoot turn away
+            if self.is_adjacent(player, target_turret.x, target_turret.y):
+                turns_req = 3
+
+            slay_move = self.safe_to_turret_slay(gameboard, target_turret, player, opponent, turn, turns_req)
+            if slay_move == Slay.SLAY_MODE:
+                print("entering turret slaying mode")
+                self.turret_to_slay = target_turret
+            elif slay_move:
+                print("safely preparing for slaying")
+                return slay_move
+
+        # in turret slaying mode, ignore other tasks
+        if self.turret_to_slay:
+            return self.turret_slay(gameboard, player, opponent)
+
         self.calc_distances(gameboard, player)
 
         destination = self.calc_destination(gameboard)
@@ -144,13 +197,27 @@ class PlayerAI:
         else:
             return turret_sq
 
+    def update_live_turrets(self, gameboard):
+        new_live_turret_num = 0
+        for turret in gameboard.turrets:
+            if not turret.is_dead:
+                new_live_turret_num += 1
+
+        # some turret died
+        if new_live_turret_num != self.live_turret_num:
+            live_turret_num = new_live_turret_num
+            self.calc_turret_slay_sq(gameboard)
+
     def calc_turret_slay_sq(self, gameboard):
-        self.turret_slay_sq = []
         d_perp = {Direction.UP : [Direction.LEFT, Direction.RIGHT],
                   Direction.DOWN : [Direction.LEFT, Direction.RIGHT],
                   Direction.LEFT : [Direction.UP, Direction.DOWN],
                   Direction.RIGHT : [Direction.UP, Direction.DOWN]}
+        # reset to get rid of dead ones
+        self.turret_slay_sq = {}
         for turret in gameboard.turrets:
+            if turret.is_dead:
+                continue
             tx = turret.x
             ty = turret.y
             cd = turret.cooldown_time
@@ -166,7 +233,7 @@ class PlayerAI:
                         for dp in d_perp[d]:
                             x2,y2 = self.next_pos((x1,y1),dp)
                             if self.walls[x2][y2] == False:
-                                self.turret_slay_sq.append((x2,y2))
+                                self.turret_slay_sq[(x2,y2)] = turret
             #Can kill slow-cooldown turrets from anywhere.
             elif cd > 3:
                 for d in list(Direction):
@@ -176,7 +243,7 @@ class PlayerAI:
                             for dp in d_perp[d]:
                                 x2,y2 = self.next_pos((x1,y1),dp)
                                 if self.walls[x2][y2] == False:
-                                    self.turret_slay_sq.append((x2,y2))
+                                    self.turret_slay_sq[(x2,y2)] = turret
                         else:
                             break
             #Can kill any turrets from beyond their shooting range.
@@ -186,7 +253,7 @@ class PlayerAI:
                     if self.walls[x1][y1] == True:
                         break
                     if i >= 4:
-                        self.turret_slay_sq.append((x1,y1))
+                        self.turret_slay_sq[(x1,y1)] = turret
                     x1,y1 = self.next_pos((x1,y1),d)
             for d in [Direction.LEFT, Direction.RIGHT]:
                 x1,y1 = self.next_pos((tx,ty),d)
@@ -194,7 +261,7 @@ class PlayerAI:
                     if self.walls[x1][y1] == True:
                         break
                     if i >= 4:
-                        self.turret_slay_sq.append((x1,y1))
+                        self.turret_slay_sq[(x1,y1)] = turret
                     x1,y1 = self.next_pos((x1,y1),d)
 
     def nearest_sq(self, squares):
@@ -203,8 +270,15 @@ class PlayerAI:
         dist = self.dist[closest_sq[0]][closest_sq[1]][0]
         return closest_sq, dist
 
+    def nearest_sq_dict(self, squares):
+        # For dictionaries with keys as (x,y):turret
+        closest_sq = min(squares.keys(), key=lambda sq: self.dist[sq[0]][sq[1]][0])
+        dist = self.dist[closest_sq[0]][closest_sq[1]][0]
+        return closest_sq, dist
+
     def nearest_turret_slay_sq(self):
-        return self.nearest_sq(self.turret_slay_sq)
+        # nearest_sq but for dictionary
+        return self.nearest_sq_dict(self.turret_slay_sq)
 
     def nearest_powerup_sq(self, gameboard):
         pu_squares = [(pu.x, pu.y) for pu in gameboard.power_ups]
@@ -321,4 +395,6 @@ class PlayerAI:
                  Direction.RIGHT : Move.FACE_RIGHT,
                  Direction.LEFT  : Move.FACE_LEFT}
             return d[direction]
-            
+
+    def is_adjacent(self, player, x, y):
+        return abs(player.x - x) <= 1 and abs(player.y - y) <= 1
