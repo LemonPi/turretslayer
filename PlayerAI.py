@@ -27,7 +27,7 @@ class Slay(Enum):
 
 def print_debug(*arg):
     ''' Prints in debug mode and does nothing in production. '''
-    # print(*arg)
+    print(*arg)
     return
  
 
@@ -281,24 +281,29 @@ class PlayerAI:
         # can't slay if facing the wrong way (don't need to modulo since turret is inside grid)
         # moving in the current direction won't be in the way of turret fire (also means turret will be in way of your fire)
         (nx, ny) = self.next_pos((player.x, player.y), player.direction)
-        if self.walls[nx][ny] or nx != target_turret.x and ny != target_turret.y :
+        if self.walls[nx][ny] or (nx != target_turret.x and ny != target_turret.y): # turn towards a location in the firing range of turret
             # turn to either get away from wall or towards turret fire
-            if player.direction != Direction.RIGHT and target_turret.x == player.x + 1 and not self.walls[player.x+1][player.y]:
-                print_debug("NO SLAY: face right")
-                self.preparing_slay_mode = Move.FACE_RIGHT
-                return
-            if player.direction != Direction.LEFT and target_turret.x == player.x - 1 and not self.walls[player.x-1][player.y]:
-                print_debug("NO SLAY: face left")
-                self.preparing_slay_mode = Move.FACE_LEFT
-                return 
-            if player.direction != Direction.UP and target_turret.y == player.y - 1 and not self.walls[player.x][player.y-1]:
-                print_debug("NO SLAY: face up")
-                self.preparnig_slay_mode = Move.FACE_UP
-                return
-            if player.direction != Direction.DOWN and target_turret.y == player.y + 1 and not self.walls[player.x][player.y+1]:
-                print_debug("NO SLAY: face down")
-                self.preparing_slay_mode = Move.FACE_DOWN
-                return
+            for d in list(Direction):
+                (x,y) = self.next_pos((player.x, player.y), d)
+                if x == target_turret.x or y == target_turret.y:
+                    self.preparing_slay_mode = self.dir_to_move(player, d)
+                    return
+            # if player.direction != Direction.RIGHT and target_turret.x == player.x + 1 and not self.walls[player.x+1][player.y]:
+            #     print_debug("NO SLAY: face right")
+            #     self.preparing_slay_mode = Move.FACE_RIGHT
+            #     return
+            # if player.direction != Direction.LEFT and target_turret.x == player.x - 1 and not self.walls[player.x-1][player.y]:
+            #     print_debug("NO SLAY: face left")
+            #     self.preparing_slay_mode = Move.FACE_LEFT
+            #     return 
+            # if player.direction != Direction.UP and target_turret.y == player.y - 1 and not self.walls[player.x][player.y-1]:
+            #     print_debug("NO SLAY: face up")
+            #     self.preparnig_slay_mode = Move.FACE_UP
+            #     return
+            # if player.direction != Direction.DOWN and target_turret.y == player.y + 1 and not self.walls[player.x][player.y+1]:
+            #     print_debug("NO SLAY: face down")
+            #     self.preparing_slay_mode = Move.FACE_DOWN
+            #     return
 
         # [fire, cooldown] period starting from 0
         period = target_turret.fire_time + target_turret.cooldown_time;
@@ -349,14 +354,14 @@ class PlayerAI:
         elif self.slay_stage == Slay.PRETURN:
             print_debug("Turning to shoot")
             self.slay_stage = Slay.SHOOT
-            if player.x < self.turret_to_slay.x:
-                return Move.FACE_RIGHT
-            elif player.x > self.turret_to_slay.x:
-                return Move.FACE_LEFT
-            elif player.y < self.turret_to_slay.y:
-                return Move.FACE_DOWN
-            else:
-                return Move.FACE_UP
+            for d in list(Direction):
+                for i in range(4):
+                    x1,y1 = self.next_pos((player.x,player.y),d,n=i+1)
+                    if gameboard.is_wall_at_tile(x1,y1): # can't reach turret by going this direction
+                        break # go to next direction
+                    if gameboard.is_turret_at_tile(x1,y1):  # reached turret without hitting a wall first
+                        return self.dir_to_move(player,d)
+
         # just shoot it
         elif self.slay_stage == Slay.SHOOT:
             print_debug("Shooting")
@@ -438,7 +443,7 @@ class PlayerAI:
             (x1,y1) = self.next_pos((player.x, player.y), player.direction)
             #Avoid turretfire.
             if not self.is_safe_from_all_turretfire(x1, y1, gameboard):
-                return Move.SHOOT
+                return Move.NONE
             #Avoid bullets
             for bullet in gameboard.bullets:
                 if bullet.direction == d_opp[player.direction]:
@@ -473,7 +478,7 @@ class PlayerAI:
                                 return move #nothing to be done; take the damage and go on your merry way. 
                     # Bullet on perpendicular path to hit. Just wait. 
                     else:
-                        return Move.SHOOT
+                        return Move.NONE
             #Avoid the square right in front of opponent - his shot would hit you with no warning.
             #But, there's also risk of a mexican standoff, with no one moving.  Only spend 2 turns shooting. 
             if (x1,y1) == self.next_pos((opponent.x, opponent.y), opponent.direction):
