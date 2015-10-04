@@ -138,16 +138,11 @@ class PlayerAI:
 
         self.dist = None
         self.calc_distances(gameboard, player)
-        direction = self.shortest_path(player, 10, 13)
+        direction = self.shortest_path(player, opponent.x, opponent.y)
         move = self.dir_to_move(player, direction)
                 
         print("Turn %d:  %f" % (turn, 1000*(time.time() - start)))
         print(move, direction)
-        print(self.dist[10][13][0])
-##        for i in range(self.h):
-##            for j in range(self.w):
-##                print(self.dist[j][i],end='')
-##            print()
         return move
 
 
@@ -178,9 +173,17 @@ class PlayerAI:
         self.calc_distances_propagate(gameboard, [(player.x,player.y,[player.direction])], [], 0)
 
     def calc_distances_propagate(self, gameboard, squares1, squares2, distance):
-        next_squares1 = squares2
+        next_squares1 = squares2[:]
         next_squares2 = []
+        squares1_dict = {}
         for (x,y,d) in squares1:
+            if (x,y) in squares1_dict:
+                squares1_dict[(x,y)] += d
+            else:
+                squares1_dict[(x,y)] = d
+        for k, v in squares1_dict.items():
+            x,y = k
+            d = v
             for d_propagation in list(Direction):
                 x1,y1 = self.next_pos((x,y), d_propagation)
                 if self.walls[x1][y1] == False:
@@ -203,14 +206,13 @@ class PlayerAI:
 
     def shortest_path(self, player, x, y):
         # Assumes self.dist calculated.  Returns direction in which you
-        # must move to get to (x,y) in shortest turns possible.
+        # must move to get to (x,y) in shortest turns possible.  Assumes you have not reached target. 
         x0 = player.x
         y0 = player.y
         while (x != x0) or (y != y0):
             dList = self.dist[x][y][1]
             d = dList[-1]
             x,y = self.prev_pos((x,y),d)
-            print(x,y)
         return d
 
     def dir_to_move(self, player, direction):
