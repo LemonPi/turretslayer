@@ -6,6 +6,7 @@ class PlayerAI:
     def __init__(self):
         # Initialize any objects or variables you need here.
         self.walls = None
+        self.easy_turrets = []
         pass
 
     def calc_walls(self, gameboard):
@@ -15,12 +16,25 @@ class PlayerAI:
         for turret in gameboard.turrets:
             self.walls[turret.x][turret.y] = True
 
+    def scout_turrets(self, gameboard):
+        """get information on turrets for whether they can be easily killable"""
+        print("scouting turrets")
+        for turret in gameboard.turrets:
+            print(turret.cooldown_time)
+            # 1 to move in, 1 to turn, 1 to shoot (assuming adjacent to turret)
+            if turret.cooldown_time > 3: # potentially 2 if we can shoot turret as it shoots back
+                self.easy_turrets.append(turret)
+            # ignore sniping from more than 4 squares away for now
+        for turret in self.easy_turrets:
+            print("easy turret at ({},{})".format(turret.x, turret.y))
+
     def get_move(self, gameboard, player, opponent):
         # Write your AI here.
         start = time.time()
 
         if self.walls == None:
             self.calc_walls(gameboard)
+            self.scout_turrets(gameboard)
 
         self.calc_distances(gameboard, player)
         # print(self.dist)
