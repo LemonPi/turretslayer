@@ -198,6 +198,11 @@ class PlayerAI:
         move = self.QA_move(gameboard, player, opponent, move)
         print(move)
 
+##        for i in range(len(self.dist)):
+##            for j in range(len(self.dist[0])):
+##                print(self.dist[j][i],end='')
+##            print()
+
         print("Turn %d:  %f" % (turn, 1000*(time.time() - start)))
         # print(move, direction)
         print(destination)
@@ -325,16 +330,15 @@ class PlayerAI:
         #All seems well.  No overrides. 
         return move
 
-            
-            
 
     def calc_destination(self, gameboard):
         turret_sq, turret_d = self.nearest_turret_slay_sq()
         pu_sq, pu_d = self.nearest_powerup_sq(gameboard)
-        if turret_d + 0 < pu_d:
-            return pu_sq
-        else:
+        print('distances', pu_d, turret_d)
+        if turret_d + 1 < pu_d:
             return turret_sq
+        else:
+            return pu_sq
 
     def update_live_turrets(self, gameboard):
         new_live_turret_num = 0
@@ -517,7 +521,7 @@ class PlayerAI:
         y0 = player.y
         while (x != x0) or (y != y0):
             dList = self.dist[x][y][1]
-            d = dList[-1]
+            d = dList[0]
             x,y = self.prev_pos((x,y),d)
         return d
 
